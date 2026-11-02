@@ -689,6 +689,10 @@ body.routine .wrap{padding-bottom:150px}
               <button class="btn play primary icon" data-lp="play" id="lpPlay" aria-label="Play"><svg class="i"><use href="#i-play"/></svg></button>
               <button class="btn icon" data-lp="fwd" aria-label="Forward 5 seconds">+5</button>
             </div>
+            <div class="grp" id="lpJump" hidden>
+              <button class="btn" data-lp="toA" aria-label="Go to the start of the loop (A)">⏮ Start</button>
+              <button class="btn" data-lp="toMid" aria-label="Go to the middle of the loop">Middle</button>
+            </div>
             <div class="grp">
               <button class="btn icon" data-lp="slower" aria-label="Slower"><svg class="i"><use href="#i-minus"/></svg></button>
               <span class="val"><small>Speed</small><span id="lpRate">100%</span></span>
@@ -714,7 +718,7 @@ body.routine .wrap{padding-bottom:150px}
             <div class="chips" id="lpSecs"></div>
             <form class="lp-save" id="lpSave"><input id="lpSecName" placeholder="Name this loop, e.g. Charanam high line" aria-label="Loop name" autocomplete="off"><button class="btn">Save loop</button></form>
           </div>
-          <p class="hint">Keys: Space play/pause · A and B set the loop · L loop on/off · ← → 2 seconds</p>
+          <p class="hint">Keys: Space play/pause · A and B set the loop · S loop start · M loop middle · L loop on/off · ← → 2 seconds</p>
         </div>
         <p class="msg" id="lpMsg" hidden></p>
       </article>
@@ -3344,6 +3348,12 @@ function lpCmd(c) {
     case 'play': lpToggle(); break;
     case 'back': Media.seek(t - 5); break;
     case 'fwd': Media.seek(t + 5); break;
+    case 'toA': case 'toMid':
+      if (LP.a == null || LP.b == null) return;
+      if (LP.turn) lpTurnCancel();
+      Media.seek(c === 'toA' ? LP.a : Math.round((LP.a + LP.b) * 5) / 10);
+      Media.play();
+      break;
     case 'slower': setRate(LP.rate - 0.05); break;
     case 'faster': setRate(LP.rate + 0.05); break;
     case 'a':
@@ -3458,6 +3468,7 @@ function lpUI() {
   lpRateTxt();
   $$('#lpRates button').forEach(b => b.setAttribute('aria-pressed', String(Math.abs(+b.dataset.r - LP.rate) < 0.001)));
   $('#lpLoopLbl').textContent = LP.a == null ? 'No loop yet: set A and B' : LP.b == null ? `A ${fmtT(LP.a)} · now set B` : `A ${fmtT(LP.a)} → B ${fmtT(LP.b)} · ${(LP.b - LP.a).toFixed(1)} s`;
+  $('#lpJump').hidden = LP.a == null || LP.b == null;
   const lb = $('#lpLoopBtn');
   lb.setAttribute('aria-pressed', String(LP.loop)); lb.textContent = LP.loop ? 'Loop on' : 'Loop off';
   $('#lpStep').setAttribute('aria-pressed', String(LP.step));
@@ -3737,7 +3748,7 @@ document.addEventListener('keydown', e => {
   if (e.target.closest && e.target.closest('input,textarea,select,#hdBtn')) return;
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-  const map = { ' ': lpToggle, k: lpToggle, a: () => lpCmd('a'), b: () => lpCmd('b'), l: () => lpCmd('loop'), ArrowLeft: () => Media.seek(Media.time() - 2), ArrowRight: () => Media.seek(Media.time() + 2) };
+  const map = { ' ': lpToggle, k: lpToggle, a: () => lpCmd('a'), b: () => lpCmd('b'), l: () => lpCmd('loop'), s: () => lpCmd('toA'), Home: () => lpCmd('toA'), m: () => lpCmd('toMid'), ArrowLeft: () => Media.seek(Media.time() - 2), ArrowRight: () => Media.seek(Media.time() + 2) };
   if (!map[k]) return;
   e.preventDefault();
   map[k]();
