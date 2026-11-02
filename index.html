@@ -246,6 +246,13 @@ input[type=range]{padding:0;min-height:32px;background:none;border:0;accent-colo
 .sc-now span{min-width:40px;padding:8px 9px;border-radius:8px;background:var(--surface-2);text-align:center;font-weight:700;font-size:15px;font-variant-numeric:tabular-nums;transition:background .08s,color .08s}
 .sc-now span.on{background:var(--accent);color:var(--on-accent)}
 .sc-now .k{background:none;min-width:0;padding-left:0;color:var(--muted);font-size:13px}
+.sc-now span.ok{box-shadow:inset 0 -4px 0 var(--ok)}
+.sc-now span.near{box-shadow:inset 0 -4px 0 var(--accent)}
+.sc-now span.off{box-shadow:inset 0 -4px 0 var(--live)}
+.sc-now span.miss{opacity:.45}
+.sc-now span[data-d]::after{content:attr(data-d);font-size:12px;margin-left:2px}
+.sc-res{margin:0;font-size:14px;line-height:1.45}
+.sc-res b{color:var(--ok)}
 .sc-range{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding-top:14px;border-top:1px solid var(--line)}
 .sc-range small{color:var(--muted);font-weight:700}
 .rg-ed{display:grid;gap:10px}
@@ -593,6 +600,7 @@ body.routine .wrap{padding-bottom:150px}
         <label class="f">Exercise<select id="scPat"></select></label>
         <p class="hint" id="scHow"></p>
         <div class="sc-now" id="scNow"></div>
+        <p class="sc-res" id="scRes" hidden></p>
         <div class="row">
           <button class="btn primary" id="scGo"><svg class="i"><use href="#i-play"/></svg>Play</button>
           <label class="f inline">Tempo<input type="range" id="scBpm" min="40" max="160" step="2" value="88" aria-label="Exercise tempo"></label><span class="val" id="scBpmV">88</span>
@@ -600,6 +608,7 @@ body.routine .wrap{padding-bottom:150px}
         <div class="row">
           <label class="f inline">Sa (key)<select id="scKey"></select></label>
           <button class="btn sm" id="scGuide" aria-pressed="true">Guide notes</button>
+          <button class="btn sm mic-only" id="scChk" aria-pressed="false">Check my pitch</button>
         </div>
         <div class="sc-range">
           <span>Your range <b id="rgLbl"></b> <small id="rgType"></small></span>
@@ -2390,6 +2399,7 @@ const ROUTINE = [
   { id: 'breath', name: 'Breath', min: 3, card: '#prBreath', how: 'Pacer: breathe in, hold, hiss out. Each round is one count longer.' },
   { id: 'warm', name: 'Warm-up', min: 3, card: '#prScales', how: 'Lip trills or humming on the 5-note slide. Light and easy.' },
   { id: 'chest', name: 'Chest voice', min: 3, card: '#prScales', how: '“Mum” and “Hey!” calls low in your range. Feel the buzz in your chest.' },
+  { id: 'runs', name: 'Upward runs', min: 3, card: '#prScales', how: 'Build the run up one note at a time, then the speed ladder. Get lighter as you climb, never louder.' },
   { id: 'power', name: 'Volume', min: 3, card: '#prMic', how: 'Volume ladder: one “ah”, four levels. More air and an open throat, never squeezing.' },
   { id: 'song', name: 'Song work', min: 5, card: '#prLoop', how: 'Loop the hardest line of a song you’re learning. Start slow and speed up each pass.' }
 ];
@@ -2397,6 +2407,7 @@ const RUN = {
   breath: () => { brMode('pace'); brStart(); },
   warm: () => { scSet('slide'); scStart(); },
   chest: () => { scSet('mum'); scStart(); },
+  runs: () => { scSet('run-build'); scStart(); },
   power: async () => {
     if (Mic.ok !== false && await mlLadderStart()) return;
     if (!RT.on || ROUTINE[RT.i].id !== 'power') return;
@@ -2582,6 +2593,9 @@ const PATS = [
   { id: 'arp', name: 'Arpeggio 1-3-5-8 · “ah”', iv: [0, 4, 7, 12, 7, 4, 0], how: 'Sing “ah” or “yah”. The top note should feel as easy as the bottom one. Don’t reach up with your chin.' },
   { id: 'mum', name: 'Chest builder · “Mum” / “Hey!”', iv: [0, 4, 7, 4, 0], stac: true, chest: true, how: 'Short, punchy “Mum” or “Hey!”, like calling a friend across the street. Hand on your chest: feel the buzz. Stop going up when it starts to strain.' },
   { id: 'octave', name: 'Octave jump, scale down · “ee”', iv: [0, 12, 11, 9, 7, 5, 4, 2, 0], how: 'Jump up an octave on “ee”, then walk down. Smooths the switch between chest and head voice.' },
+  { id: 'run-build', grp: 'Upward runs (fixed Sa, with the drone)', name: 'Build it up · one note at a time', run: 'build', then: 'run-speed', how: 'Sa Re Ga, then Sa Re Ga Ma, one more note each time until high Sa, twice each. Land on the top note in tune before the next run. Upward runs go wrong when you push, so get lighter as you climb, never louder.' },
+  { id: 'run-mirror', name: 'Mirror · down, then straight back up', run: 'mirror', how: 'You’re already good going down, so use it: run down from high Sa and come straight back up at the same speed. Keep the way up as light and loose as the way down.' },
+  { id: 'run-speed', name: 'Speed ladder · Sa to high Sa', run: 'speed', how: 'One upward run, getting faster: 1×, 1.5×, 2×, 3×, 4×, three times each. Start on “ng” or a lip trill, then “ah”. Notice the speed where it smears, and raise the tempo a little each week.' },
   { id: 'sargam', grp: 'Alankars (fixed Sa, with the drone)', name: 'Sargam up and down', seq: 'sargam', how: 'Sa Re Ga Ma Pa Dha Ni Sa and back, with the drone. Turn guide notes off to test your pitch.' },
   { id: 'a3', name: 'Alankar · groups of 3', seq: 3, how: 'Sa Re Ga, Re Ga Ma, Ga Ma Pa… then back down. Clean, separate notes.' },
   { id: 'a4', name: 'Alankar · groups of 4', seq: 4, how: 'Sa Re Ga Ma, Re Ga Ma Pa… Builds agility for fast film-song phrases.' },
@@ -2589,7 +2603,7 @@ const PATS = [
   { id: 'long', name: 'Long notes · Sa, Pa, high Sa', seq: 'long', how: 'Hold each note for 4 beats at full, steady volume. Breath support and steady pitch in one exercise.' },
   { id: 'kharaj', name: 'Kharaj · low Sa for chest voice', seq: 'kharaj', how: 'The classic Indian chest-voice practice: long, full notes around your lowest Sa. Deep and open, never pressed.' }
 ];
-const SC = { on: false, p: null, ev: [], beats: 0, groups: [], titles: [], i: 0, t0: 0, spb: 0.68, timer: 0, raf: 0, out: null, ownDrone: false, cur: -1, shown: -1 };
+const SC = { on: false, p: null, ev: [], beats: 0, groups: [], titles: [], i: 0, t0: 0, spb: 0.68, timer: 0, raf: 0, out: null, ownDrone: false, cur: -1, shown: -1, tok: 0, chk: false, k: 0, smp: [], res: [] };
 function scSaFor(lo, hi) {
   const cands = [];
   for (let m = Drone.key + 24; m <= 96; m += 12) cands.push(m);
@@ -2621,6 +2635,25 @@ function scBuild(p) {
       });
     });
     return { ev, beats: b, groups, titles, label: `From ${noteName(start)} up to ${noteName(roots.reduce((a, r) => Math.max(a, r), 0) + top)}` };
+  }
+  if (p.run) {
+    // each run lands on its top note: hold 2 beats, breathe 1
+    const sa = scSaFor(lo, hi), up = n => Array.from({ length: n }, (_, i) => i), runs = [];
+    if (p.run === 'build') for (let n = 3; n <= 8; n++) runs.push([up(n), 0.5, 'Sa = ' + noteName(sa)], [up(n), 0.5, 'Sa = ' + noteName(sa)]);
+    else {
+      const deg = p.run === 'mirror' ? [7, 6, 5, 4, 3, 2, 1, 0, 1, 2, 3, 4, 5, 6, 7] : up(8), reps = p.run === 'mirror' ? 2 : 3;
+      [[1, '1×'], [2 / 3, '1.5×'], [0.5, '2×'], [1 / 3, '3×'], [0.25, '4×']].forEach(([len, x]) => { for (let r = 0; r < reps; r++) runs.push([deg, len, x + ' speed']); });
+    }
+    runs.forEach(([deg, len, title], g) => {
+      groups.push(deg.map(x => DEG_LBL[x]));
+      titles.push(title);
+      deg.forEach((x, j) => {
+        const last = j === deg.length - 1;
+        ev.push({ t: b, d: last ? 1.8 : len * 0.9, m: sa + DEG[x], g, j });
+        b += last ? 3 : len;
+      });
+    });
+    return { ev, beats: b, groups, titles, label: 'Sa = ' + noteName(sa) };
   }
   const sa = scSaFor(lo, hi), hold = p.seq === 'long' || p.seq === 'kharaj';
   let seqs, base = sa;
@@ -2655,12 +2688,14 @@ function scInfo() {
   $('#scLbl').textContent = b.label;
   if (!SC.on) $('#scNow').innerHTML = `<span class="k">${esc(b.titles[0] || '')}</span>` + b.groups[0].map(x => `<span>${esc(x)}</span>`).join('');
 }
-function scStart() {
+async function scStart() {
   const c = ac();
   if (!c) { toast('Audio isn’t available in this browser'); return; }
   scStop();
-  const p = PATS.find(x => x.id === $('#scPat').value) || PATS[0];
-  Object.assign(SC, { on: true, p, ...scBuild(p), i: 0, cur: -1, shown: -1, spb: 60 / +$('#scBpm').value, t0: c.currentTime + 0.25 });
+  const tok = ++SC.tok, p = PATS.find(x => x.id === $('#scPat').value) || PATS[0];
+  const chk = $('#scChk').getAttribute('aria-pressed') === 'true' && await Mic.open('scales');
+  if (tok !== SC.tok) { if (chk) Mic.close('scales'); return; }
+  Object.assign(SC, { on: true, p, ...scBuild(p), i: 0, cur: -1, shown: -1, spb: 60 / +$('#scBpm').value, t0: c.currentTime + 0.25, chk, k: 0, smp: [], res: [] });
   SC.out = c.createGain(); SC.out.connect(c.destination);
   if (!p.iv && !Drone.nodes) { Drone.start(); SC.ownDrone = true; dRender(); }
   SC.timer = setInterval(scSched, 25);
@@ -2677,7 +2712,54 @@ function scSched() {
     if (e.chord) e.chord.forEach(m => keyTone(SC.out, t, m, d, 0.13));
     else if (guide) keyTone(SC.out, t, e.m, d, 0.3);
   }
-  if (now > SC.t0 + SC.beats * SC.spb + 0.2) { scStop(); toast('Exercise done'); }
+  if (SC.chk) scCheck();
+  if (now > SC.t0 + SC.beats * SC.spb + 0.2) {
+    const nx = RT.on && SC.p.then;
+    scStop();
+    if (nx) { scSet(nx); scStart(); } else toast('Exercise done');
+  }
+}
+// pitch check: grade each guide note from what the mic heard in its middle, allowing for headphone delay and singer lag
+function scCheck() {
+  const t = AC.currentTime - 0.05 - (AC.outputLatency || 0), f = Mic.read();
+  while (SC.k < SC.ev.length) {
+    const e = SC.ev[SC.k];
+    if (e.chord) { SC.k++; continue; }
+    const s = SC.t0 + e.t * SC.spb, d = e.d * SC.spb;
+    if (t < s + d * 0.3) return;
+    if (t <= s + d * 0.9) { if (f.hz > 0) SC.smp.push(69 + 12 * Math.log2(f.hz / 440) - e.m); return; }
+    scGrade(e);
+    SC.k++;
+  }
+}
+function scGrade(e) {
+  const v = SC.smp.map(x => x - 12 * Math.round(x / 12)).sort((a, b) => a - b), n = v.length, med = n ? v[n >> 1] : 0, a = Math.abs(med);
+  SC.smp = [];
+  const cls = n < 2 ? 'miss' : a <= 0.4 ? 'ok' : a <= 0.75 ? 'near' : 'off';
+  SC.res.push({ g: e.g, lbl: SC.groups[e.g][e.j], cls, d: med });
+  const el = e.g === SC.shown && $$('#scNow span:not(.k)')[e.j];
+  if (!el) return;
+  el.classList.add(cls);
+  el.title = n < 2 ? 'Not heard' : `${med > 0 ? '+' : ''}${Math.round(med * 100)} cents`;
+  if (cls === 'near' || cls === 'off') el.dataset.d = med < 0 ? '↓' : '↑';
+}
+function scReport() {
+  const r = SC.res, ts = [...new Set(r.map(x => SC.titles[x.g]))], by = {};
+  if (r.length < 4) return;
+  const pct = a => Math.round(100 * a.filter(x => x.cls === 'ok').length / a.length);
+  let h = `<b>${pct(r)}%</b> of ${r.length} notes on pitch.`;
+  if (SC.p.run && ts.length > 1) {
+    const sp = ts.map(t => [t.replace(' speed', ''), pct(r.filter(x => SC.titles[x.g] === t))]), clean = sp.filter(x => x[1] >= 80).pop();
+    h += ' ' + sp.map(([t, v]) => `${t} ${v}%`).join(' · ') + '.' + (clean ? ` Clean up to ${clean[0]}.` : '');
+  }
+  r.forEach(x => (by[x.lbl] = by[x.lbl] || []).push(x));
+  const weak = Object.keys(by).length < 2 ? [] : Object.entries(by).filter(([, a]) => a.length > 1 && pct(a) < 70).sort((a, b) => pct(a[1]) - pct(b[1])).slice(0, 3).map(([l, a]) => {
+    const heard = a.filter(x => x.cls !== 'miss'), m = heard.reduce((s, x) => s + x.d, 0) / (heard.length || 1);
+    return l + (!heard.length ? ' (not heard)' : m < -0.2 ? ' (flat)' : m > 0.2 ? ' (sharp)' : '');
+  });
+  if (weak.length) h += ' Watch ' + esc(weak.join(', ')) + '.';
+  $('#scRes').innerHTML = h;
+  $('#scRes').hidden = false;
 }
 function scDraw() {
   if (!SC.on) return;
@@ -2695,9 +2777,11 @@ function scDraw() {
   $$('#scNow span:not(.k)').forEach((el, j) => el.classList.toggle('on', j === e.j));
 }
 function scStop() {
+  SC.tok++;
   if (!SC.on) return;
   SC.on = false;
   clearInterval(SC.timer); cancelAnimationFrame(SC.raf);
+  if (SC.chk) { scReport(); Mic.close('scales'); SC.chk = false; }
   const out = SC.out;
   if (out) { out.gain.setTargetAtTime(0, AC.currentTime, 0.03); setTimeout(() => out.disconnect(), 400); }
   SC.out = null;
@@ -3349,6 +3433,13 @@ $('#scBpm').addEventListener('input', e => {
 });
 $('#scBpm').value = LS.get('sb.scbpm', 88); $('#scBpmV').textContent = $('#scBpm').value;
 $('#scGuide').onclick = () => { const b = $('#scGuide'); b.setAttribute('aria-pressed', String(b.getAttribute('aria-pressed') !== 'true')); };
+$('#scChk').setAttribute('aria-pressed', String(LS.get('sb.scchk', false)));
+$('#scChk').onclick = () => {
+  const on = $('#scChk').getAttribute('aria-pressed') !== 'true';
+  $('#scChk').setAttribute('aria-pressed', String(on));
+  LS.set('sb.scchk', on);
+  if (on) toast(`Wear headphones, or the mic hears the guide notes instead of you.${SC.on ? ' Starts with the next play.' : ''}`);
+};
 $('#scKey').addEventListener('change', e => {
   Drone.key = +e.target.value; LS.set('sb.drone', Drone.key);
   if (Drone.nodes) Drone.start();
