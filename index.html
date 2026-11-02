@@ -287,6 +287,9 @@ input[type=range]{padding:0;min-height:32px;background:none;border:0;accent-colo
 .lp-src select{width:auto;flex:0 1 230px}
 .lp-recent{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 .lp-recent:empty{display:none}
+.lp-ig{display:grid;gap:10px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface-2);font-size:14px}
+.lp-ig p{margin:0}
+.lp-ig ol{margin:0;padding-left:20px;display:grid;gap:4px;color:var(--muted)}
 .lp-recent .btn{max-width:100%;overflow:hidden;text-overflow:ellipsis}
 .lp-stage{display:grid;gap:14px}
 .lp-media{border-radius:10px;overflow:hidden;background:#000;width:100%;max-width:720px;justify-self:center}
@@ -672,12 +675,22 @@ body.routine .wrap{padding-bottom:150px}
       <article class="tool wide" id="prLoop">
         <header class="tool-h"><h2>Loop trainer</h2><span class="lbl">Slow it down · loop the hard part · sing it back</span></header>
         <div class="lp-src">
-          <form class="lp-yt" id="lpYtForm"><input id="lpUrl" type="url" inputmode="url" placeholder="Paste a YouTube link" aria-label="YouTube link" autocomplete="off"><button class="btn">Load</button></form>
+          <form class="lp-yt" id="lpYtForm"><input id="lpUrl" type="url" inputmode="url" placeholder="Paste a YouTube or Instagram link" aria-label="YouTube or Instagram link" autocomplete="off"><button class="btn">Load</button></form>
           <button class="btn" id="lpFileBtn">Open audio or video file</button>
           <input type="file" id="lpFile" accept="audio/*,video/*,.mp3,.m4a,.wav,.aac,.ogg,.flac,.mp4,.mov,.webm" hidden>
           <select id="lpSong" aria-label="Load a song’s reference recording" hidden></select>
         </div>
         <div class="lp-recent" id="lpRecent"></div>
+        <div class="lp-ig" id="lpIg" hidden>
+          <p><b>Instagram reel.</b> Instagram doesn’t let other sites play its videos, so record the reel from its own tab. The recording gets the same speed and loop controls as any other track.</p>
+          <ol id="lpIgSteps">
+            <li>Open the reel in a new tab and turn its sound on.</li>
+            <li>Come back here, tap <b>Record a tab</b> and pick the Instagram tab. Keep “Also share tab audio” switched on.</li>
+            <li>Let the reel play all the way through once, then come back and tap <b>Stop</b>.</li>
+          </ol>
+          <p class="msg" id="lpIgMsg" hidden></p>
+          <div class="row"><a class="btn" id="lpIgOpen" target="_blank" rel="noopener">Open the reel</a><button class="btn rec" id="trGo" aria-pressed="false">Record a tab</button><button class="btn ghost" id="lpIgX">Close</button></div>
+        </div>
         <div class="lp-stage" id="lpStage" hidden>
           <div class="lp-media" id="lpMedia"><video id="lpVideo" playsinline preload="metadata" hidden></video><div id="lpYt"></div></div>
           <div class="lp-title" id="lpTitle"></div>
@@ -710,6 +723,7 @@ body.routine .wrap{padding-bottom:150px}
             <button class="btn sm" data-lp="step" id="lpStep" aria-pressed="false">Speed up 5% each pass</button>
             <button class="btn sm" data-lp="gap" id="lpGap" aria-pressed="false">Sing-back gap</button>
             <button class="btn sm mic-only" data-lp="echo" id="lpEcho" aria-pressed="false" hidden>Play my take back</button>
+            <button class="btn sm" id="lpKeep" hidden>Save this recording</button>
             <span class="lbl" id="lpPass"></span>
           </div>
           <div class="lp-turn" id="lpTurn" hidden></div>
@@ -3180,7 +3194,7 @@ async function saveFile(name, blob) {
 
 /* ---------- loop trainer ---------- */
 const vid = $('#lpVideo');
-const LP = { kind: null, key: '', id: '', yt: '', title: '', a: null, b: null, loop: true, rate: 1, step: false, gap: false, echo: false, passes: 0, turn: false, turnEnd: 0, recr: null, take: null, raf: 0, url: null, saveT: 0, lastJump: 0, drawT: 0, playing: null };
+const LP = { kind: null, key: '', id: '', yt: '', title: '', a: null, b: null, loop: true, rate: 1, step: false, gap: false, echo: false, passes: 0, turn: false, turnEnd: 0, recr: null, take: null, raf: 0, url: null, rec: null, saveT: 0, lastJump: 0, drawT: 0, playing: null };
 const YT = { frame: null, ready: false, t: 0, at: 0, rate: 1, state: -1, dur: 0, poll: 0, fail: 0, n: 0 };
 const YT_ERR = {
   2: 'That link doesn’t point to a video YouTube can play.', 5: 'This video can’t play in an embedded player.',
@@ -3247,8 +3261,9 @@ function lpReset() {
   $('#lpYt').innerHTML = '';
   vid.pause(); vid.removeAttribute('src'); vid.load();
   if (LP.url) { URL.revokeObjectURL(LP.url); LP.url = null; }
-  Object.assign(LP, { kind: null, key: '', id: '', yt: '', title: '', a: null, b: null, rate: 1, passes: 0, playing: null });
+  Object.assign(LP, { kind: null, key: '', id: '', yt: '', title: '', a: null, b: null, rate: 1, passes: 0, playing: null, rec: null });
   $('#lpMsg').hidden = true;
+  if (!IG.rec) $('#lpIg').hidden = true;
 }
 function lpShow() {
   $('#lpStage').hidden = false;
@@ -3282,12 +3297,19 @@ function lpLoadSrc(src, title, key) {
   lpReset();
   Object.assign(LP, { kind: 'file', title, key: '', id: '' });
   vid.preservesPitch = true; vid.mozPreservesPitch = true; vid.webkitPreservesPitch = true;
+  vid.ondurationchange = null;
   vid.src = src;
   vid.hidden = true; $('#lpMedia').hidden = true;
-  vid.onloadedmetadata = () => {
+  const ready = () => {
     LP.key = key(vid.duration); LP.id = 'l-' + hash(LP.key);
     if (vid.videoWidth) { vid.hidden = false; $('#lpMedia').hidden = false; }
     lpRestore();
+  };
+  // browser-recorded WebM has no duration until the end has been read once
+  vid.onloadedmetadata = () => {
+    if (isFinite(vid.duration)) { ready(); return; }
+    vid.ondurationchange = () => { if (!isFinite(vid.duration)) return; vid.ondurationchange = null; vid.currentTime = 0; ready(); };
+    vid.currentTime = 1e101;
   };
   vid.onerror = () => { if (LP.kind === 'file' && vid.getAttribute('src')) lpErr('That file can’t play in this browser. MP3, M4A and MP4 work almost everywhere.'); };
   lpShow();
@@ -3298,10 +3320,80 @@ function lpLoadFile(file) {
   LP.url = url;
 }
 function lpLoadLink(link, title) {
-  const id = ytIdOf(link);
+  const id = ytIdOf(link), ig = igCodeOf(link);
   if (id) { lpLoadYt(id, title); return true; }
+  if (ig) { igShow(ig); return true; }
   if (/^https?:\/\/\S+$/i.test(link)) { lpLoadSrc(link, title || link.replace(/^https?:\/\//, '').slice(0, 60), () => 'url:' + link); return true; }
   return false;
+}
+/* Instagram has no embeddable player API, so a reel is recorded from its own tab and loaded as a file */
+const IG = { code: '', rec: null, stream: null, chunks: [], t0: 0, timer: 0 };
+const igCodeOf = s => { const m = String(s || '').trim().match(/^(?:https?:\/\/)?(?:www\.|m\.)?(?:instagram\.com|instagr\.am)\/(?:[\w.]+\/)?(?:p|reels?|tv)\/([\w-]+)/i); return m ? m[1] : null; };
+function trOk() {
+  try { const fp = document.permissionsPolicy || document.featurePolicy; if (fp && typeof fp.allowsFeature === 'function' && !fp.allowsFeature('display-capture')) return false; } catch {}
+  return !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia && window.MediaRecorder);
+}
+function igMsg(html) { $('#lpIgMsg').innerHTML = html; $('#lpIgMsg').hidden = !html; }
+function igShow(code) {
+  if (IG.rec) { toast('Stop the current recording first'); return; }
+  const ok = trOk();
+  IG.code = code;
+  $('#lpIgOpen').href = `https://www.instagram.com/reel/${code}/`;
+  $('#lpIgSteps').hidden = $('#trGo').hidden = !ok;
+  igMsg(ok ? '' : esc('Recording a tab works in Chrome, Edge or Brave on a computer, in the web version of Stagebook.') + webLink());
+  $('#lpMsg').hidden = true;
+  $('#lpIg').hidden = false;
+  trUI();
+}
+async function trStart() {
+  let s;
+  try {
+    s = await navigator.mediaDevices.getDisplayMedia({
+      video: { displaySurface: 'browser', frameRate: { max: 30 }, width: { max: 1280 }, height: { max: 1280 } },
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, suppressLocalAudioPlayback: false },
+      selfBrowserSurface: 'exclude', surfaceSwitching: 'include', systemAudio: 'exclude', preferCurrentTab: false
+    });
+  } catch (err) {
+    igMsg(esc('Recording didn’t start. If you didn’t cancel it, this browser blocked it: it works in Chrome, Edge or Brave on a computer.') + webLink());
+    return;
+  }
+  if (!s.getAudioTracks().length) {
+    s.getTracks().forEach(t => t.stop());
+    igMsg(esc('No sound came through. Pick a browser tab (not a window or the whole screen) and keep “Also share tab audio” on. On a Mac, this needs Chrome, Edge or Brave.'));
+    return;
+  }
+  const mime = ['video/mp4;codecs=avc1,mp4a.40.2', 'video/webm;codecs=vp8,opus', 'video/webm'].find(m => MediaRecorder.isTypeSupported(m)) || '';
+  let r;
+  try { r = new MediaRecorder(s, { mimeType: mime, videoBitsPerSecond: 2500000, audioBitsPerSecond: 160000 }); } catch { r = new MediaRecorder(s); }
+  Object.assign(IG, { rec: r, stream: s, chunks: [], t0: Date.now() });
+  r.ondataavailable = e => { if (e.data && e.data.size) IG.chunks.push(e.data); };
+  r.onstop = trDone;
+  s.getTracks().forEach(t => t.addEventListener('ended', trStop));
+  r.start(1000);
+  igMsg('');
+  IG.timer = setInterval(trUI, 500);
+  trUI();
+}
+function trStop() { if (IG.rec && IG.rec.state !== 'inactive') IG.rec.stop(); }
+function trDone() {
+  const type = (IG.rec && IG.rec.mimeType) || 'video/webm', secs = (Date.now() - IG.t0) / 1000, blob = new Blob(IG.chunks, { type });
+  clearInterval(IG.timer);
+  if (IG.stream) IG.stream.getTracks().forEach(t => t.stop());
+  Object.assign(IG, { rec: null, stream: null, chunks: [] });
+  trUI();
+  if (secs < 1 || !blob.size) { toast('Nothing was recorded'); return; }
+  const file = new File([blob], `Instagram ${IG.code || 'reel'} ${dayKey()}.${/mp4/.test(type) ? 'mp4' : 'webm'}`, { type });
+  $('#lpIg').hidden = true;
+  lpLoadFile(file);
+  LP.rec = file;
+  lpUI();
+  toast('Recording loaded. Set A and B around the part you want.');
+}
+function trUI() {
+  const b = $('#trGo'), on = !!IG.rec;
+  b.setAttribute('aria-pressed', String(on));
+  b.textContent = on ? `■ Stop · ${fmtDur((Date.now() - IG.t0) / 1000)}` : 'Record a tab';
+  $('#lpIgX').hidden = on;
 }
 function lpRestore() {
   const doc = PR.docs.get(LP.id);
@@ -3469,6 +3561,7 @@ function lpUI() {
   $$('#lpRates button').forEach(b => b.setAttribute('aria-pressed', String(Math.abs(+b.dataset.r - LP.rate) < 0.001)));
   $('#lpLoopLbl').textContent = LP.a == null ? 'No loop yet: set A and B' : LP.b == null ? `A ${fmtT(LP.a)} · now set B` : `A ${fmtT(LP.a)} → B ${fmtT(LP.b)} · ${(LP.b - LP.a).toFixed(1)} s`;
   $('#lpJump').hidden = LP.a == null || LP.b == null;
+  $('#lpKeep').hidden = !LP.rec;
   const lb = $('#lpLoopBtn');
   lb.setAttribute('aria-pressed', String(LP.loop)); lb.textContent = LP.loop ? 'Loop on' : 'Loop off';
   $('#lpStep').setAttribute('aria-pressed', String(LP.step));
@@ -3693,9 +3786,16 @@ $('#lpYtForm').addEventListener('submit', e => {
   e.preventDefault();
   const v = $('#lpUrl').value.trim();
   if (!v) return;
-  if (!lpLoadLink(v)) { toast('Paste a YouTube link, or open a file'); return; }
+  if (!lpLoadLink(v)) { toast('Paste a YouTube or Instagram link, or open a file'); return; }
   $('#lpUrl').value = '';
 });
+$('#trGo').onclick = () => { if (IG.rec) trStop(); else trStart(); };
+$('#lpIgX').onclick = () => { $('#lpIg').hidden = true; };
+$('#lpKeep').onclick = async () => {
+  if (!LP.rec) return;
+  await saveFile(LP.rec.name, LP.rec);
+  if (!window.claude) toast('Saved. Open it later with “Open audio or video file” and your saved loops come back.');
+};
 $('#lpFileBtn').onclick = () => $('#lpFile').click();
 $('#lpFile').addEventListener('change', e => { const f = e.target.files[0]; if (f) lpLoadFile(f); e.target.value = ''; });
 $('#lpSong').addEventListener('change', e => { const s = S.songs.get(e.target.value); e.target.value = ''; if (s) practiceRef(s); });
