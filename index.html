@@ -320,7 +320,21 @@ input[type=range]{padding:0;min-height:32px;background:none;border:0;accent-colo
 .rbar-t small{color:var(--muted);font-size:13px}
 .rbar-clock{font-family:var(--f-display);font-weight:800;font-size:34px;font-variant-numeric:tabular-nums;min-width:2.6ch;text-align:right}
 body.routine .wrap{padding-bottom:150px}
-@media (max-width:560px){.rbar-t small{display:none}.rbar .btn{padding:0 10px}}
+@media (max-width:560px){.rbar-t small{display:none}.rbar .btn{padding:0 10px}#rbPause span{display:none}}
+.rbar.paused .rbar-clock{opacity:.4}
+#prWeekly .tool-h{flex-wrap:wrap;align-items:center}
+.wk-nav{display:flex;align-items:center;gap:6px}
+.wk-sum{margin:0;font-size:15px;line-height:1.55}
+.wk-sum b{font-weight:800}
+.wk-rows{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,210px),1fr));gap:8px}
+.wk-rows li{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 8px;align-items:center;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface-2)}
+.wk-rows .t{grid-column:1;font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.wk-rows .v{grid-column:1;font-weight:800;font-size:19px;font-variant-numeric:tabular-nums}
+.wk-rows small{grid-column:1/-1;color:var(--muted);font-size:12.5px}
+.wk-tr{grid-row:1/3;grid-column:2;font-size:12px;font-weight:800;padding:3px 8px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+.wk-tr.up{color:var(--ok);border-color:currentColor}
+.wk-tr.down{color:var(--live);border-color:currentColor}
+.wk-tr.new{color:var(--cue);border-color:currentColor}
 @media (prefers-reduced-motion:reduce){.br-ball{transition:border-color .3s}}
 
 /* ---------- sheets, menu, toast ---------- */
@@ -562,6 +576,7 @@ body.routine .wrap{padding-bottom:150px}
         </dl>
         <div class="pr-week" id="prDots" role="img"></div>
         <p class="hint">A day counts toward the streak after 5 minutes of practice. The clock runs only while an exercise is running.</p>
+        <div class="row"><button class="btn sm" id="prWkGo">Weekly review</button></div>
       </div>
       <div class="pr-box">
         <header class="tool-h"><h2>Daily routine</h2><span class="lbl" id="prLen"></span></header>
@@ -698,12 +713,20 @@ body.routine .wrap{padding-bottom:150px}
         <p class="msg" id="lpMsg" hidden></p>
       </article>
 
+      <!-- weekly review -->
+      <article class="tool wide" id="prWeekly">
+        <header class="tool-h"><h2>Weekly review</h2><div class="wk-nav"><button class="btn icon sm" id="wkPrev" aria-label="Previous week">‹</button><span class="lbl" id="wkLbl"></span><button class="btn icon sm" id="wkNext" aria-label="Next week">›</button></div></header>
+        <p class="wk-sum" id="wkSum"></p>
+        <ul class="wk-rows" id="wkRows"></ul>
+        <p class="hint">Each week is compared with the one before, Monday to Sunday. Runs and breath only get numbers when you measure them: use Check my pitch on the speed ladder (web version) and do one hold test a week.</p>
+      </article>
     </div>
 
     <div class="rbar" id="prBar" hidden>
       <div class="rbar-in">
         <div class="rbar-t"><b id="rbName"></b><small id="rbHow"></small></div>
         <span class="rbar-clock" id="rbClock">0:00</span>
+        <button class="btn" id="rbPause" aria-label="Pause routine"><svg class="i"><use href="#i-pause"/></svg><span>Pause</span></button>
         <button class="btn" id="rbNext">Next</button>
         <button class="btn ghost" id="rbStop" aria-label="End routine"><svg class="i"><use href="#i-x"/></svg></button>
       </div>
@@ -2251,6 +2274,13 @@ function prPut(doc) { doc.updatedAt = Date.now(); PR.docs.set(doc.id, doc); prSa
 const prMeta = () => PR.docs.get('meta') || { id: 'meta', range: null, cal: null, brave: {} };
 const prDay = (k = dayKey()) => PR.docs.get('d-' + k) || { id: 'd-' + k, date: k, secs: 0, holds: [], steps: {} };
 const prRange = () => prMeta().range || { lo: 48, hi: 67 };
+function prMark(step) {
+  const d = prDay();
+  if ((d.steps || {})[step]) return;
+  d.steps = { ...(d.steps || {}), [step]: true };
+  prPut(d);
+  prSteps();
+}
 function prConnect(db, id) {
   try {
     PR.coll = db.collection('data/users/' + id);
@@ -2314,6 +2344,7 @@ function prStats() {
   $('#prWeek').textContent = Math.round(week / 60) + ' min';
   const best = prBestHold();
   $('#prBest').textContent = best ? best.toFixed(1) + ' s' : '–';
+  wkRender();
 }
 
 /* shared audio voice for exercises */
@@ -2416,8 +2447,36 @@ const RUN = {
   },
   song: () => { if (!LP.kind) $('#lpUrl').focus({ preventScroll: true }); }
 };
-const RT = { on: false, i: 0, end: 0, timer: 0 };
+const RT = { on: false, i: 0, end: 0, timer: 0, paused: false, left: 0, resume: null };
+const rtLeft = () => RT.paused ? RT.left : Math.max(0, RT.end - Date.now());
 function stopExercises() { brStop(); scStop(); mlLadderStop(); }
+// pause freezes the step clock and stops whatever is playing; resume restarts that exercise
+function rtPause() {
+  if (!RT.on) return;
+  if (!RT.paused) {
+    RT.left = rtLeft();
+    const sc = SC.on && SC.p.id, lad = !!(ML.lad && !ML.lad.done), lp = !!LP.kind && Media.playing();
+    RT.resume = sc ? () => { scSet(sc); scStart(); } : BR.on ? brStart : lad ? mlLadderStart : lp ? () => Media.play() : null;
+    stopExercises();
+    if (lp) Media.pause();
+    RT.paused = true;
+    act('routine', false);
+  } else {
+    RT.paused = false;
+    RT.end = Date.now() + RT.left;
+    act('routine', true);
+    const r = RT.resume;
+    RT.resume = null;
+    if (r) r();
+  }
+  rtBar();
+}
+function rtBar() {
+  $('#prBar').classList.toggle('paused', RT.paused);
+  $('#rbPause').innerHTML = `<svg class="i"><use href="#i-${RT.paused ? 'play' : 'pause'}"/></svg><span>${RT.paused ? 'Resume' : 'Pause'}</span>`;
+  $('#rbPause').setAttribute('aria-label', RT.paused ? 'Resume routine' : 'Pause routine');
+  $('#rbClock').textContent = fmtDur(Math.ceil(rtLeft() / 1000));
+}
 function rtStart(i) {
   RT.on = true;
   act('routine', true);
@@ -2431,6 +2490,9 @@ function rtStep(i) {
   RT.i = i;
   const st = ROUTINE[i];
   RT.end = Date.now() + st.min * 60000;
+  RT.paused = false; RT.resume = null;
+  act('routine', true);
+  rtBar();
   $('#prBar').hidden = false;
   $('#rbName').textContent = `${i + 1}/${ROUTINE.length} · ${st.name}`;
   $('#rbHow').textContent = st.how;
@@ -2444,23 +2506,21 @@ function rtStep(i) {
   RUN[st.id]();
 }
 function rtTick() {
-  if (!RT.on) return;
-  const left = Math.max(0, RT.end - Date.now());
+  if (!RT.on || RT.paused) return;
+  const left = rtLeft();
   $('#rbClock').textContent = fmtDur(Math.ceil(left / 1000));
   if (!left) rtNext(true);
 }
 function rtNext(auto) {
   const st = ROUTINE[RT.i];
-  if (auto || RT.end - Date.now() <= st.min * 30000) {
-    const d = prDay();
-    d.steps = { ...(d.steps || {}), [st.id]: true };
-    PR.docs.set(d.id, d); PR.dirty++;
-  }
+  if (auto || rtLeft() <= st.min * 30000) prMark(st.id);
   if (auto) chime();
   if (RT.i < ROUTINE.length - 1) rtStep(RT.i + 1); else rtEnd(true);
 }
 function rtEnd(done) {
   RT.on = false;
+  RT.paused = false; RT.resume = null;
+  $('#prBar').classList.remove('paused');
   clearInterval(RT.timer);
   stopExercises();
   $('#prBar').hidden = true;
@@ -2531,7 +2591,7 @@ function brStop(done) {
   $('#brRound').textContent = done ? `${BR.round} rounds, up to ${BR.n} counts` : '';
   $('#brGo').innerHTML = '<svg class="i"><use href="#i-play"/></svg>Start';
   act('breath', false);
-  if (done && was) chime();
+  if (done && was) { chime(); prMark('breath'); }
 }
 
 const HD = { on: false, t0: 0, raf: 0, auto: false, iv: 0, floor: -60, voiced: 0, quiet: 0 };
@@ -2714,7 +2774,8 @@ function scSched() {
   }
   if (SC.chk) scCheck();
   if (now > SC.t0 + SC.beats * SC.spb + 0.2) {
-    const nx = RT.on && SC.p.then;
+    const nx = RT.on && SC.p.then, p = SC.p, step = p.run ? 'runs' : p.chest || p.seq === 'kharaj' ? 'chest' : p.iv ? 'warm' : '';
+    if (step) prMark(step);
     scStop();
     if (nx) { scSet(nx); scStart(); } else toast('Exercise done');
   }
@@ -2760,6 +2821,15 @@ function scReport() {
   if (weak.length) h += ' Watch ' + esc(weak.join(', ')) + '.';
   $('#scRes').innerHTML = h;
   $('#scRes').hidden = false;
+  if (r.length < 8) return;
+  // keep per-exercise totals on the day for the weekly review
+  const d = prDay(), id = SC.p.id, x = { n: 0, ok: 0, ...((d.pitch || {})[id] || {}) };
+  x.n += r.length;
+  x.ok += r.filter(y => y.cls === 'ok').length;
+  if (SC.p.run === 'speed') x.clean = Math.max(x.clean || 0, ...ts.filter(t => pct(r.filter(y => SC.titles[y.g] === t)) >= 80).map(t => parseFloat(t)));
+  d.pitch = { ...(d.pitch || {}), [id]: x };
+  prPut(d);
+  wkRender();
 }
 function scDraw() {
   if (!SC.on) return;
@@ -2804,6 +2874,7 @@ function rgSave(lo, hi) {
   const m = prMeta();
   m.range = { lo, hi };
   prPut(m);
+  const d = prDay(); d.range = { lo, hi }; prPut(d);
   rgRender(); scInfo(); mlDraw(performance.now());
 }
 function rgCapture(text) {
@@ -2988,9 +3059,12 @@ function mlLadderStep(now, inZone) {
   if (L.held[L.i] >= 3) {
     L.i++;
     chime();
-    if (L.i >= RUNGS.length) {
-      L.done = true; L.i = RUNGS.length - 1;
-      const d = prDay(); d.ladders = (d.ladders || 0) + 1; prPut(d);
+    const d = prDay();
+    d.rung = Math.max(d.rung || 0, L.i);
+    if (L.i >= RUNGS.length) { L.done = true; L.i = RUNGS.length - 1; d.ladders = (d.ladders || 0) + 1; }
+    prPut(d);
+    if (L.done) {
+      prMark('power');
       toast('Ladder done. That top rung is your stage volume.');
       setTimeout(mlLadderStop, 2500);
     }
@@ -3385,6 +3459,90 @@ function bvRender() {
   }).join('');
 }
 
+/* ---------- weekly review: this week against the one before ---------- */
+const WK = { back: null };
+const SPEEDS = [1, 1.5, 2, 3, 4];
+function wkMonday(back) {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - (d.getDay() + 6) % 7 - back * 7);
+  return d;
+}
+function wkStats(back) {
+  const s = { secs: 0, days: 0, routines: 0, holds: [], steps: {}, n: 0, ok: 0, rn: 0, rok: 0, clean: 0, ladders: 0, rung: 0, brave: 0 }, m0 = wkMonday(back);
+  for (let i = 0; i < 7; i++) {
+    const t = new Date(m0); t.setDate(t.getDate() + i);
+    const d = PR.docs.get('d-' + dayKey(t));
+    if (!d) continue;
+    s.secs += d.secs || 0;
+    if ((d.secs || 0) >= 300) s.days++;
+    s.routines += d.routines || 0;
+    s.holds.push(...(d.holds || []));
+    Object.keys(d.steps || {}).forEach(k => { s.steps[k] = (s.steps[k] || 0) + 1; });
+    Object.entries(d.pitch || {}).forEach(([id, x]) => {
+      s.n += x.n || 0; s.ok += x.ok || 0;
+      if (id === 'run-build' || id === 'run-speed') { s.rn += x.n || 0; s.rok += x.ok || 0; }
+      s.clean = Math.max(s.clean, x.clean || 0);
+    });
+    s.ladders += d.ladders || 0;
+    s.rung = Math.max(s.rung, d.rung || 0);
+    s.brave += d.brave || 0;
+  }
+  s.hold = s.holds.length ? Math.max(...s.holds) : 0;
+  s.acc = s.n ? Math.round(100 * s.ok / s.n) : null;
+  s.racc = s.rn ? Math.round(100 * s.rok / s.rn) : null;
+  return s;
+}
+// one row per focus area: c and p are this week's and last week's number (null = not measured)
+// part: the week isn't over, so running totals (cum) can't be 'lower' yet
+function wkAreas(a, b, part) {
+  const days = (s, k) => s.steps[k] || 0, rung = n => n ? RUNGS[n - 1][0] : '–';
+  const runBy = a.clean && b.clean ? 'clean' : 'racc', runFmt = x => runBy === 'clean' ? x + '×' : x + '%';
+  return [
+    { id: 'practice', t: 'Practice', v: Math.round(a.secs / 60) + ' min', s: `${a.days} of 7 days · ${a.routines} routine${a.routines === 1 ? '' : 's'}`, c: a.secs ? a.secs / 60 : null, p: b.secs ? b.secs / 60 : null, min: 5, cum: true, f: x => Math.round(x) + ' min' },
+    { id: 'runs', t: 'Upward runs', v: a.clean ? `clean up to ${a.clean}×` : a.racc != null ? a.racc + '% on pitch' : days(a, 'runs') ? 'not measured' : '–', s: `practised ${days(a, 'runs')} day${days(a, 'runs') === 1 ? '' : 's'}${a.racc != null ? ` · ${a.racc}% on pitch` : ''}`, c: a[runBy] || null, p: b[runBy] || null, min: runBy === 'clean' ? 0.1 : 3, f: runFmt, done: days(a, 'runs') || a.rn },
+    { id: 'breath', t: 'Breath hold', v: a.hold ? a.hold.toFixed(1) + ' s' : days(a, 'breath') ? 'not measured' : '–', s: `${a.holds.length} hold test${a.holds.length === 1 ? '' : 's'} · pacer on ${days(a, 'breath')} day${days(a, 'breath') === 1 ? '' : 's'}`, c: a.hold || null, p: b.hold || null, min: 0.5, f: x => x.toFixed(1) + ' s', done: days(a, 'breath') || a.holds.length },
+    { id: 'chest', t: 'Chest voice', v: days(a, 'chest') + ' day' + (days(a, 'chest') === 1 ? '' : 's'), s: '“Mum” calls or kharaj', c: days(a, 'chest') || null, p: days(b, 'chest') || null, min: 1, cum: true, f: x => x + (x === 1 ? ' day' : ' days'), done: days(a, 'chest') },
+    { id: 'volume', t: 'Volume', v: rung(a.rung), s: `top rung cleared · ${a.ladders} full ladder${a.ladders === 1 ? '' : 's'}`, c: a.rung || null, p: b.rung || null, min: 1, f: rung, done: a.rung || days(a, 'power') },
+    { id: 'brave', t: 'Brave reps', v: a.brave + ' rep' + (a.brave === 1 ? '' : 's'), s: 'singing in front of people', c: a.brave || null, p: b.brave || null, min: 1, cum: true, f: x => x + (x === 1 ? ' rep' : ' reps'), done: a.brave },
+    { id: 'pitch', t: 'Pitch (all checked)', v: a.acc != null ? a.acc + '%' : '–', s: a.n ? `${a.n} notes checked` : 'turn on Check my pitch', c: a.acc, p: b.acc, min: 3, f: x => x + '%' }
+  ].map(r => ({ ...r, tr: r.c == null ? '' : r.p == null ? 'new' : r.c - r.p >= r.min ? 'up' : r.p - r.c >= r.min ? (part && r.cum ? '' : 'down') : 'same' }));
+}
+// the next target for one area, from this week's numbers
+function wkGoal(id, a) {
+  if (id === 'runs') { const nx = SPEEDS.find(x => x > a.clean); return a.clean ? (nx ? `get the speed ladder clean at ${nx}×` : 'stay clean at 4× with the tempo 8 higher') : 'do the speed ladder with Check my pitch on, to get a clean speed'; }
+  if (id === 'breath') return a.hold ? `push your best hold past ${Math.ceil(a.hold + 2)} s` : 'do one hold test for a baseline';
+  if (id === 'chest') return 'do the chest-voice step on 5 days';
+  if (id === 'volume') return a.rung < RUNGS.length ? `clear the ${RUNGS[a.rung][0]} rung on the volume ladder` : 'finish the volume ladder on 3 days';
+  const bv = prMeta().brave || {}, cur = BRAVE.findIndex((_, i) => ((bv[i] || {}).n || 0) < 3);
+  return cur < 0 ? 'keep one brave rep a week going' : `log reps on rung ${cur + 1}: ${BRAVE[cur][0].toLowerCase()}`;
+}
+function wkRender() {
+  if (!$('#wkRows')) return;
+  if (WK.back == null) WK.back = !wkStats(0).secs && wkStats(1).secs ? 1 : 0;
+  const back = WK.back, a = wkStats(back), b = wkStats(back + 1), m0 = wkMonday(back), sun = new Date(m0);
+  sun.setDate(sun.getDate() + 6);
+  const dm = d => d.toLocaleDateString([], { day: 'numeric', month: 'short' });
+  $('#wkLbl').textContent = `${back === 0 ? 'This week' : back === 1 ? 'Last week' : 'Week'} · ${dm(m0)} – ${dm(sun)}`;
+  $('#wkNext').disabled = back === 0;
+  const first = [...PR.docs.keys()].filter(k => k.startsWith('d-')).sort()[0];
+  $('#wkPrev').disabled = !first || dayKey(m0) <= first.slice(2);
+  const rows = wkAreas(a, b, back === 0);
+  $('#wkRows').innerHTML = rows.map(r => `<li><span class="t">${esc(r.t)}</span><span class="v">${esc(r.v)}</span>${r.tr ? `<span class="wk-tr ${r.tr}">${{ up: '↑ better', down: '↓ lower', same: '= same', new: 'new' }[r.tr]}</span>` : ''}<small>${esc(r.s)}${r.p != null ? ' · last week ' + esc(r.f(r.p)) : ''}</small></li>`).join('');
+  if (!a.secs) { $('#wkSum').textContent = back ? 'Nothing logged this week.' : 'Nothing logged this week yet. Do the routine on 5 days and this fills in.'; return; }
+  const focus = rows.filter(r => 'done' in r), list = rs => rs.map(r => `${r.t.toLowerCase()} (${r.f(r.p)} → ${r.f(r.c)})`).join(', ');
+  const up = focus.filter(r => r.tr === 'up'), down = focus.filter(r => r.tr === 'down'), skip = focus.filter(r => !r.done);
+  const pick = skip[0] || down[0] || focus.find(r => r.tr === 'same' || r.tr === '') || focus.find(r => r.tr === 'new') || focus[0];
+  let h = b.secs ? '' : 'First week on record, so these numbers are your baseline. ';
+  if (up.length) h += `<b>Better:</b> ${esc(list(up))}. `;
+  if (down.length) h += `<b>Lower:</b> ${esc(list(down))}. `;
+  if (b.secs && !up.length && !down.length) h += 'No clear change from last week. ';
+  if (skip.length) h += `<b>${back ? 'Skipped' : 'Not yet this week'}:</b> ${esc(skip.map(r => r.t.toLowerCase()).join(', '))}. `;
+  if (a.days < 5) h += back ? `You practised on ${a.days} day${a.days === 1 ? '' : 's'}; 5 is where progress starts to show. ` : `${a.days} day${a.days === 1 ? '' : 's'} so far; aim for 5. `;
+  h += `<b>${back ? 'Next' : 'This'} week:</b> ${esc(wkGoal(pick.id, a))}.`;
+  $('#wkSum').innerHTML = h;
+}
+
 /* ---------- render and wiring ---------- */
 function prRender() {
   prStats(); prSteps(); hdHist(); bvRender(); rgRender(); lpRecent(); lpSongs();
@@ -3408,6 +3566,10 @@ function prInit() {
 $('#prSteps').addEventListener('click', e => { const b = e.target.closest('[data-step]'); if (b) rtStart(+b.dataset.step); });
 $('#prGo').onclick = () => RT.on ? rtEnd(false) : rtStart(0);
 $('#rbNext').onclick = () => rtNext(false);
+$('#rbPause').onclick = rtPause;
+$('#wkPrev').onclick = () => { WK.back++; wkRender(); };
+$('#wkNext').onclick = () => { WK.back = Math.max(0, WK.back - 1); wkRender(); };
+$('#prWkGo').onclick = () => $('#prWeekly').scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' });
 $('#rbStop').onclick = () => rtEnd(false);
 
 $('#brMode').addEventListener('click', e => { const b = e.target.closest('[data-v]'); if (b) brMode(b.dataset.v); });
@@ -3534,7 +3696,8 @@ $('#bvList').addEventListener('click', e => {
   const i = +b.dataset.brave, m = prMeta(), x = (m.brave || {})[i] || { n: 0 };
   m.brave = { ...(m.brave || {}), [i]: { n: (x.n || 0) + 1, last: dayKey() } };
   prPut(m);
-  bvRender();
+  const d = prDay(); d.brave = (d.brave || 0) + 1; prPut(d);
+  bvRender(); wkRender();
   toast(m.brave[i].n === 3 ? 'Rung cleared. On to the next one.' : `Rep logged: ${m.brave[i].n} of 3`);
 });
 
