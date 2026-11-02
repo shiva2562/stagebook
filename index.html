@@ -325,6 +325,12 @@ body.routine .wrap{padding-bottom:150px}
 #prWeekly .tool-h{flex-wrap:wrap;align-items:center}
 .wk-nav{display:flex;align-items:center;gap:6px}
 .wk-sum{margin:0;font-size:15px;line-height:1.55}
+.wk-ai{display:grid;gap:8px;padding:14px 16px;border:1px solid color-mix(in srgb,var(--cue) 45%,var(--line));border-radius:12px;background:color-mix(in srgb,var(--cue) 7%,var(--surface))}
+.wk-ai h3{margin:0;font-family:var(--f-display);font-weight:800;font-size:20px;letter-spacing:.04em;text-transform:uppercase;color:var(--cue)}
+.wk-ai h4{margin:4px 0 0;font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.wk-ai p,.wk-ai ul{margin:0;font-size:15px;line-height:1.5}
+.wk-ai ul{padding-left:20px;display:grid;gap:3px}
+.wk-ai small{color:var(--muted);font-size:12.5px}
 .wk-sum b{font-weight:800}
 .wk-rows{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,210px),1fr));gap:8px}
 .wk-rows li{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 8px;align-items:center;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface-2)}
@@ -716,9 +722,10 @@ body.routine .wrap{padding-bottom:150px}
       <!-- weekly review -->
       <article class="tool wide" id="prWeekly">
         <header class="tool-h"><h2>Weekly review</h2><div class="wk-nav"><button class="btn icon sm" id="wkPrev" aria-label="Previous week">‹</button><span class="lbl" id="wkLbl"></span><button class="btn icon sm" id="wkNext" aria-label="Next week">›</button></div></header>
+        <div class="wk-ai" id="wkAi" hidden></div>
         <p class="wk-sum" id="wkSum"></p>
         <ul class="wk-rows" id="wkRows"></ul>
-        <p class="hint">Each week is compared with the one before, Monday to Sunday. Runs and breath only get numbers when you measure them: use Check my pitch on the speed ladder (web version) and do one hold test a week.</p>
+        <p class="hint">Each week is compared with the one before, Monday to Sunday. Every Monday morning Claude reads the week and adds its analysis here. Runs and breath only get numbers when you measure them: use Check my pitch on the speed ladder (web version) and do one hold test a week. <span id="wkSync"></span></p>
       </article>
     </div>
 
@@ -2269,7 +2276,44 @@ const webLink = () => location.href.startsWith(WEB) ? '' : ` <a href="${WEB}" ta
 const PR = { docs: new Map(), coll: null, act: new Set(), dirty: 0, synced: false };
 Object.values(LS.get('sb.pr', {}) || {}).forEach(d => { if (d && d.id) PR.docs.set(d.id, d); });
 const prSaveLocal = () => LS.set('sb.pr', Object.fromEntries(PR.docs));
-function prUp(doc) { const c = PR.coll; if (c && !S.readOnly) WQ.push('pr/' + doc.id, () => c.doc(doc.id).set(plain(doc))); }
+function prUp(doc) { const c = PR.coll; if (c && !S.readOnly) WQ.push('pr/' + doc.id, () => c.doc(doc.id).set(plain(doc))); syncPush(doc); }
+
+/* web version: practice docs also sync to Supabase once this device has opened its #sync=<key> link,
+   so the weekly analysis can read them; the key stays in this browser, never in the page source */
+const SYNC = { url: 'https://uesfpgxtdkzamrhapqyu.supabase.co/rest/v1/practice_docs', key: 'sb_publishable_3FniMRYQA_KNXaxx0Tlv9g_sjfuM5eK', code: LS.get('sb.sync', ''), fresh: false, q: new Map(), t: 0 };
+if (location.hash.startsWith('#sync=') && location.hash.length > 20) {
+  SYNC.code = location.hash.slice(6); SYNC.fresh = true;
+  LS.set('sb.sync', SYNC.code);
+  history.replaceState(null, '', location.pathname + location.search + '#practice');
+}
+const syncHead = () => ({ apikey: SYNC.key, 'x-sync-key': SYNC.code, 'Content-Type': 'application/json' });
+function syncPush(doc) {
+  if (!SYNC.code) return;
+  SYNC.q.set(doc.id, doc);
+  clearTimeout(SYNC.t);
+  SYNC.t = setTimeout(syncFlush, 1500);
+}
+async function syncFlush() {
+  clearTimeout(SYNC.t);
+  if (!SYNC.q.size) return;
+  const batch = [...SYNC.q.values()];
+  SYNC.q.clear();
+  const body = JSON.stringify(batch.map(d => ({ id: d.id, doc: plain(d), updated_at: new Date(d.updatedAt || Date.now()).toISOString() })));
+  try {
+    const r = await fetch(SYNC.url, { method: 'POST', keepalive: body.length < 60000, headers: { ...syncHead(), Prefer: 'resolution=merge-duplicates,return=minimal' }, body });
+    if (!r.ok) throw new Error(r.status);
+  } catch {
+    batch.forEach(d => { if (!SYNC.q.has(d.id)) SYNC.q.set(d.id, d); });
+    SYNC.t = setTimeout(syncFlush, 30000);
+  }
+}
+async function syncPull() {
+  if (!SYNC.code) return;
+  try {
+    const r = await fetch(SYNC.url + '?select=doc', { headers: syncHead() });
+    if (r.ok) prMerge((await r.json()).map(x => x.doc).filter(d => d && d.id));
+  } catch {}
+}
 function prPut(doc) { doc.updatedAt = Date.now(); PR.docs.set(doc.id, doc); prSaveLocal(); prUp(doc); }
 const prMeta = () => PR.docs.get('meta') || { id: 'meta', range: null, cal: null, brave: {} };
 const prDay = (k = dayKey()) => PR.docs.get('d-' + k) || { id: 'd-' + k, date: k, secs: 0, holds: [], steps: {} };
@@ -2320,7 +2364,7 @@ setInterval(() => {
   if (++PR.dirty >= 30) prFlush();
   else if (S.view === 'practice' && PR.dirty % 10 === 0) prStats();
 }, 1000);
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') prFlush(); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') { prFlush(); syncFlush(); } else syncPull(); });
 
 function prBestHold() { let b = 0; for (const d of PR.docs.values()) (d.holds || []).forEach(s => { if (s > b) b = s; }); return b; }
 function prStats() {
@@ -3460,7 +3504,7 @@ function bvRender() {
 }
 
 /* ---------- weekly review: this week against the one before ---------- */
-const WK = { back: null };
+const WK = { back: 0, nav: false };
 const SPEEDS = [1, 1.5, 2, 3, 4];
 function wkMonday(back) {
   const d = new Date();
@@ -3519,7 +3563,8 @@ function wkGoal(id, a) {
 }
 function wkRender() {
   if (!$('#wkRows')) return;
-  if (WK.back == null) WK.back = !wkStats(0).secs && wkStats(1).secs ? 1 : 0;
+  // until the viewer picks a week: show last week while this one is still empty
+  if (!WK.nav) WK.back = !wkStats(0).secs && wkStats(1).secs ? 1 : 0;
   const back = WK.back, a = wkStats(back), b = wkStats(back + 1), m0 = wkMonday(back), sun = new Date(m0);
   sun.setDate(sun.getDate() + 6);
   const dm = d => d.toLocaleDateString([], { day: 'numeric', month: 'short' });
@@ -3527,6 +3572,14 @@ function wkRender() {
   $('#wkNext').disabled = back === 0;
   const first = [...PR.docs.keys()].filter(k => k.startsWith('d-')).sort()[0];
   $('#wkPrev').disabled = !first || dayKey(m0) <= first.slice(2);
+  const an = PR.docs.get('a-' + dayKey(m0)), ai = $('#wkAi');
+  ai.hidden = !an;
+  if (an) ai.innerHTML = '<h3>Claude’s analysis</h3>' + (an.summary ? `<p>${esc(an.summary)}</p>` : '')
+    + [['Improved', an.improved], ['Work on', an.work], ['Next week’s targets', an.next]].filter(([, l]) => Array.isArray(l) && l.length).map(([t, l]) => `<h4>${t}</h4><ul>${l.map(x => `<li>${esc(x)}</li>`).join('')}</ul>`).join('')
+    + (an.tip ? `<h4>Try this</h4><p>${esc(an.tip)}</p>` : '') + (an.written ? `<small>Written ${esc(fmtDate(an.written))}</small>` : '');
+  $('#wkSync').textContent = SYNC.code ? 'This device syncs its practice data, so Claude’s analysis includes it.'
+    : PR.coll ? 'Practice here is saved to your claude.ai account, which Claude’s analysis reads.'
+    : location.href.startsWith(WEB) ? 'This device doesn’t sync practice data yet, so Claude’s analysis can’t see it. Open your personal sync link here once.' : '';
   const rows = wkAreas(a, b, back === 0);
   $('#wkRows').innerHTML = rows.map(r => `<li><span class="t">${esc(r.t)}</span><span class="v">${esc(r.v)}</span>${r.tr ? `<span class="wk-tr ${r.tr}">${{ up: '↑ better', down: '↓ lower', same: '= same', new: 'new' }[r.tr]}</span>` : ''}<small>${esc(r.s)}${r.p != null ? ' · last week ' + esc(r.f(r.p)) : ''}</small></li>`).join('');
   if (!a.secs) { $('#wkSum').textContent = back ? 'Nothing logged this week.' : 'Nothing logged this week yet. Do the routine on 5 days and this fills in.'; return; }
@@ -3567,8 +3620,8 @@ $('#prSteps').addEventListener('click', e => { const b = e.target.closest('[data
 $('#prGo').onclick = () => RT.on ? rtEnd(false) : rtStart(0);
 $('#rbNext').onclick = () => rtNext(false);
 $('#rbPause').onclick = rtPause;
-$('#wkPrev').onclick = () => { WK.back++; wkRender(); };
-$('#wkNext').onclick = () => { WK.back = Math.max(0, WK.back - 1); wkRender(); };
+$('#wkPrev').onclick = () => { WK.nav = true; WK.back++; wkRender(); };
+$('#wkNext').onclick = () => { WK.nav = true; WK.back = Math.max(0, WK.back - 1); wkRender(); };
 $('#prWkGo').onclick = () => $('#prWeekly').scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' });
 $('#rbStop').onclick = () => rtEnd(false);
 
@@ -3707,6 +3760,8 @@ const h = (location.hash || '').slice(1);
 setView(h === 'setlists' ? 'sets' : h === 'tools' || h === 'practice' ? h : 'songs');
 renderSongs(); renderSets(); mRender(); dRender(); prInit();
 connect();
+syncPull();
+if (SYNC.fresh) toast('Practice sync is on for this device');
 })();
 </script>
 
